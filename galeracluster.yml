@@ -1,0 +1,68 @@
+---
+- hosts: all
+  vars:
+   galera_wsrep_cluster_name: ipcsystems
+   galera_sst_user: galera
+   galera_sst_pass: galera
+   hostname_prefix: galera-node-0  
+  tasks:
+# create a directory my.cnf.d if it doesn't exist
+  - name: Creates directory
+    file: 
+      path: /root/dockerimages/{{ hostname_prefix }}{{ item }}/my.cnf.d
+      state: directory
+      recurse: yes
+    with_sequence: count=3
+  - name: copying /var/lib/mysql
+    copy:
+     src: mysql.zip
+     dest: /root/dockerimages/{{ hostname_prefix }}{{ item }}/
+    with_sequence: count=3
+  - name: unzip mysql.zip
+    unarchive:
+     src: /root/dockerimages/{{ hostname_prefix }}{{ item }}/mysql.zip
+     dest: /root/dockerimages/{{ hostname_prefix }}{{ item }}/
+     remote_src: yes
+    with_sequence: count=3
+  
+ # wsrep_cluster_address  
+ 
+  - name: Galaera Cluster members list
+    set_fact: 
+     cluster_members: "{{ hostname_prefix }}{{ item }}"
+    with_sequence: count=3
+    register: cluster_members_list    
+ 
+ # copy server.cnf file to my.cnf.d   
+  - name: template copying
+    template:
+      src: server.cnf.j2
+      dest: /root/dockerimages/{{ hostname_prefix }}{{ item }}/my.cnf.d/server.cnf
+    with_sequence: count=3
+ # Dock container creation setup    
+  - name: Create a data container
+    docker_container:
+      name: "{{ hostname_prefix }}{{ item }}"
+      image: mariadb-galera
+      recreate: yes
+      hostname: "{{ hostname_prefix}}{{ item }}"
+      networks:
+       - name: galera
+      purge_networks: yes
+      ports: 
+        - 330{{item}}:3306
+      volumes:
+        - /root/dockerimages/{{ hostname_prefix }}{{ item }}/my.cnf.d:/etc/my.cnf.d
+        - /root/dockerimages/{{ hostname_prefix }}{{ item }}/mysql:/var/lib/mysql
+    with_sequence: count=3
+    # Change Directory Ownership
+  - name: Changing /var/lib/mysql Ownership
+    command: docker exec galera-node-0{{ item }} chown -R mysql:mysql /var/lib/mysql
+    with_sequence: count=3
+    # Start MySql Processes on Docker Containers
+  - name: MariaDB Galera Cluster Bootstrap
+    command: docker exec galera-node-01 /etc/init.d/mysql start --wsrep-new-cluster
+    
+  - name: member joining Cluster
+    command: docker exec galera-node-0{{ item }} /etc/init.d/mysql start
+    with_sequence: start=2 end=3
